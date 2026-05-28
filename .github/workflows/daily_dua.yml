@@ -1,0 +1,110 @@
+# .github/workflows/daily_dua.yml
+# ----------------------------------
+# Triggers once daily, within an optimised window per day of the week.
+# The cron fires at the START of the window; main.py then sleeps a
+# random number of minutes so the actual post lands unpredictably
+# inside that window — keeping the account looking organic.
+#
+# All times are IST (UTC+5:30). Cron runs in UTC, so IST − 5:30.
+#
+# Target windows (IST):
+#
+#  Day          | Window IST       | Window length | Cron fires (UTC)
+#  -------------|------------------|---------------|------------------
+#  Mon–Thu      | 09:00 – 12:00    | 180 min       | 03:30 UTC
+#  Friday       | 12:00 – 14:00    | 120 min       | 06:30 UTC  ← Jumu'ah audience peak
+#  Sat–Sun      | 10:00 – 13:00    | 180 min       | 04:30 UTC
+#
+# Window lengths are passed to main.py via WINDOW_MINUTES so the
+# random sleep stays inside the correct range for that day.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   ANTHROPIC_API_KEY
+#   R2_ACCOUNT_ID
+#   R2_ACCESS_KEY_ID
+#   R2_SECRET_ACCESS_KEY
+#   R2_BUCKET_NAME
+#   R2_PUBLIC_URL
+#   IG_USER_ID
+#   IG_ACCESS_TOKEN
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_CHAT_ID
+
+name: Daily Dua Post
+
+on:
+  schedule:
+    - cron: "30 3 * * 1-4"   # Mon–Thu  09:00 IST  (03:30 UTC)
+    - cron: "30 6 * * 5"     # Friday   12:00 IST  (06:30 UTC)
+    - cron: "30 4 * * 0,6"   # Sat–Sun  10:00 IST  (04:30 UTC)
+
+  workflow_dispatch:
+    inputs:
+      window_minutes:
+        description: "Random sleep window in minutes (default 60)"
+        required: false
+        default: "60"
+
+jobs:
+  post-dua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240    # 4 hours — covers the longest window (180 min) + pipeline runtime
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Dependencies ───────────────────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Resolve window length from cron schedule or manual input ───────
+      # Mon–Thu cron fires at 03:30 UTC (hour = 3)  → 180 min window
+      # Friday  cron fires at 06:30 UTC (hour = 6)  → 120 min window
+      # Sat–Sun cron fires at 04:30 UTC (hour = 4)  → 180 min window
+      - name: Resolve window
+        id: window
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "window_minutes=${{ github.event.inputs.window_minutes }}" >> $GITHUB_OUTPUT
+          else
+            HOUR=$(date -u +"%H")
+            if [ "$HOUR" -eq "6" ]; then
+              echo "window_minutes=120" >> $GITHUB_OUTPUT   # Friday shorter window
+            else
+              echo "window_minutes=180" >> $GITHUB_OUTPUT   # All other days
+            fi
+          fi
+
+      # ── 5. Run pipeline ───────────────────────────────────────────────────
+      - name: Run dua pipeline
+        env:
+          WINDOW_MINUTES:        ${{ steps.window.outputs.window_minutes }}
+          ANTHROPIC_API_KEY:     ${{ secrets.ANTHROPIC_API_KEY }}
+          R2_ACCOUNT_ID:         ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL:         ${{ secrets.R2_PUBLIC_URL }}
+          IG_USER_ID:            ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN:       ${{ secrets.IG_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      # ── 6. Commit duas.json (marks dua as used) ───────────────────────────
+      - name: Commit duas.json usage update
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add duas.json
+          git diff --staged --quiet || git commit -m "chore: mark dua as used [skip ci]"
+          git push

@@ -1,0 +1,6 @@
+# Generated images — do not commit
+output_images/*.jpg
+output_images/*.png
+__pycache__/
+*.pyc
+.env

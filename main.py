@@ -54,7 +54,7 @@ def random_sleep_within_window(window_minutes: int):
     # Sleep anywhere from 1 minute up to (window_minutes - 5) to leave
     # enough runway for the pipeline itself to complete inside the window.
     max_sleep = max(1, window_minutes - 5)
-    sleep_minutes = random.randint(1, max_sleep)
+    sleep_minutes = random.randint(1, 3)
 
     print(f"  Day            : {now.strftime('%A')}")
     print(f"  Window (IST)   : {window[0]}:00 – {window[1]}:00")
